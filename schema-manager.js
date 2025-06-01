@@ -114,9 +114,7 @@ async function setupFullSchema() {
     // Read the schema.sql file
     const schemaPath = path.join(__dirname, 'schema.sql');
     const schemaSql = fs.readFileSync(schemaPath, 'utf8')
-      // Replace all instances of sigh_ai with DEUSS in the schema
-      .replace(/sigh_ai/g, 'DEUSS');
-    
+   
     console.log('Running full schema setup...');
     
     // Execute the schema SQL as a transaction

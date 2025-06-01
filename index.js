@@ -118,10 +118,6 @@ pool.on('error', (err) => {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Update allowed origins to ensure frontend domains are properly included
-const allowedOrigins = [
-  '*'
-];
 
 // Improve CORS configuration to better handle cookies
 app.use(bodyParser.json({ limit: '50mb' }));
@@ -152,7 +148,7 @@ app.use(cors({
       }
     } else {
       // In development, allow all localhost origins
-      if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1:')) {
+      if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
         return callback(null, true);
       } else {
         console.warn(`CORS blocked request from ${origin}`);
@@ -227,7 +223,7 @@ let sessionStore;
     
     // Setup domain for cookies
     const cookieDomain = process.env.NODE_ENV === 'production' 
-      ? process.env.COOKIE_DOMAIN || '.sigh-ai.com' // Use cookie domain for production 
+      ? process.env.COOKIE_DOMAIN || '.deuss.space' // Use cookie domain for production 
       : undefined; // No domain for localhost
     
     // Initialize session middleware with the store with improved cookie settings
@@ -236,7 +232,7 @@ let sessionStore;
       secret: process.env.SESSION_SECRET || 'your-secret-key',
       resave: false,
       saveUninitialized: false,
-      name: 'sigh.sid', // Use a custom cookie name
+      name: 'deuss.sid', // Use a custom cookie name
       genid: function(req) {
         return uuidv4(); // Use UUID for session IDs
       },
@@ -2299,12 +2295,3 @@ app.use((req, res, next) => {
   }
   next();
 });
-
-// AWS Lambda handler
-exports.handler = async (event, context) => {
-  // Serverless Express adapter
-  const serverlessExpress = require('serverless-express');
-  const handler = serverlessExpress({ app });
-  
-  return handler(event, context);
-};

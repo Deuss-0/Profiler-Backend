@@ -25,7 +25,8 @@
     "google-search-results-nodejs": "^2.1.0",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.15.6",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "node-fetch": "^2.6.7"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
