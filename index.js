@@ -9,8 +9,29 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+const { Resend } = require('resend');
 
-//const EventEmitter = require('events');
+// Initialize Resend
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+// Define JWT_SECRET at the top level
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+// Verify JWT secret at startup
+console.log('Application starting...');
+console.log('Environment:', process.env.NODE_ENV);
+console.log('JWT_SECRET from env:', process.env.JWT_SECRET);
+console.log('JWT_SECRET constant:', JWT_SECRET);
+
+// Test JWT signing and verification
+try {
+  const testToken = jwt.sign({ test: 'data' }, JWT_SECRET);
+  const verified = jwt.verify(testToken, JWT_SECRET);
+  console.log('JWT test successful - secret is working correctly');
+} catch (error) {
+  console.error('JWT test failed:', error);
+  process.exit(1); // Exit if JWT is not working
+}
 
 // PostgreSQL Configuration
 const poolConfig = {
@@ -282,7 +303,7 @@ let sessionStore;
         if (authHeader && authHeader.startsWith('Bearer ')) {
           try {
             const token = authHeader.substring(7);
-            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+            const decoded = jwt.verify(token, JWT_SECRET);
             req.user = decoded;
             // Set user ID from JWT in our dummy session
             req.session.uid = decoded.id;
@@ -339,7 +360,7 @@ let sessionStore;
         if (authHeader && authHeader.startsWith('Bearer ')) {
           try {
             const token = authHeader.substring(7);
-            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+            const decoded = jwt.verify(token, JWT_SECRET);
             req.user = decoded;
           } catch (error) {
             console.error('JWT verification failed:', error);
@@ -401,7 +422,7 @@ const loginRequired = (req, res, next) => {
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
       const token = authHeader.substring(7);
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+      const decoded = jwt.verify(token, JWT_SECRET);
       if (decoded && decoded.id) {
         userId = decoded.id;
         
@@ -439,7 +460,7 @@ const loginRequired = (req, res, next) => {
       const cookieTokenMatch = cookies.match(/jwt=([^;]+)/);
       if (cookieTokenMatch && cookieTokenMatch[1]) {
         const token = cookieTokenMatch[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        const decoded = jwt.verify(token, JWT_SECRET);
         if (decoded && decoded.id) {
           userId = decoded.id;
           
@@ -477,6 +498,61 @@ const loginRequired = (req, res, next) => {
   });
 };
 
+// Function to send verification email
+async function sendVerificationEmail(email, token) {
+  if (process.env.EMAIL_VERIFICATION !== 'true') {
+    console.log('Development mode: Skipping email verification');
+    return;
+  }
+
+  const verificationUrl = `${process.env.FRONTEND_URL}/auth/verify-email?token=${token}`;
+  
+  try {
+    // Verify Resend configuration
+    if (!process.env.RESEND_API_KEY) {
+      throw new Error('RESEND_API_KEY environment variable is not set');
+    }
+
+    // Use Resend's default domain if custom domain is not verified
+    const fromEmail = process.env.SMTP_FROM || 'Deuss <onboarding@resend.dev>';
+
+    const { data, error } = await resend.emails.send({
+      from: fromEmail,
+      to: email,
+      subject: 'Verify your email address for Deuss',
+      html: `
+        <div style="font-family: sans-serif; background-color: #1a202c; color: #e2e8f0; padding: 20px;">
+          <h1 style="color: #4299e1;">Welcome to Deuss!</h1>
+          <p>Hello there,</p>
+          <p>Thank you for joining the Deuss community! To unlock your full cybersecurity dashboard experience, you just need to verify your email address.</p>
+          <p>Please click the button below to verify your account:</p>
+          <p>
+            <a href="${verificationUrl}" style="display: inline-block; background-color: #2d3748; color: #4299e1; padding: 10px 20px; text-decoration: none; border-radius: 5px; border: 1px solid #4299e1;">
+              Verify Your Email Address
+            </a>
+          </p>
+          <p>Or copy and paste this link into your browser:</p>
+          <p><code style="color: #e2e8f0; background-color: #2d3748; padding: 5px; border-radius: 3px;">${verificationUrl}</code></p>
+          <p>This link will expire in 24 hours for security reasons.</p>
+          <p>If you did not sign up for Deuss, please disregard this email.</p>
+          <p>Stay secure,</p>
+          <p>The Deuss Team</p>
+        </div>
+      `
+    });
+
+    if (error) {
+      console.error('Error sending verification email:', error);
+      throw new Error(`Failed to send verification email: ${error.message}`);
+    }
+
+    console.log('Verification email sent:', data);
+  } catch (error) {
+    console.error('Error sending verification email:', error);
+    throw error;
+  }
+}
+
 // Authentication Routes
 app.post('/api/auth/register', async (req, res) => {
   const { email, password, fullName } = req.body;
@@ -500,23 +576,88 @@ app.post('/api/auth/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
+    // Generate verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+    // Create user with verification token
     const result = await pool.query(
-      'INSERT INTO deuss.users (email, password, full_name, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id, email, full_name',
-      [email, hashedPassword, fullName]
+      `INSERT INTO deuss.users (
+        email, password, full_name, verification_token, 
+        verification_token_expiry, is_verified, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) 
+      RETURNING id, email, full_name, is_verified`,
+      [email, hashedPassword, fullName, verificationToken, verificationTokenExpiry, false]
     );
 
+    // Send verification email in production
+    if (process.env.EMAIL_VERIFICATION === 'true') {
+      try {
+        await sendVerificationEmail(email, verificationToken);
+      } catch (emailError) {
+        console.error('Failed to send verification email:', emailError);
+        // Don't fail registration if email fails
+      }
+    }
+
     res.status(201).json({
-      message: 'User registered successfully',
+      message: 'User registered successfully. Please check your email to verify your account.',
       user: {
         id: result.rows[0].id,
         email: result.rows[0].email,
-        fullName: result.rows[0].full_name
+        fullName: result.rows[0].full_name,
+        is_verified: result.rows[0].is_verified
       }
     });
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({ error: 'Failed to register user' });
+  }
+});
+
+// Add email verification endpoint
+app.get('/api/auth/verify-email', async (req, res) => {
+  const { token } = req.query;
+
+  if (!token) {
+    return res.status(400).json({ error: 'Verification token is required' });
+  }
+
+  try {
+    // Find user with this token
+    const result = await pool.query(
+      `SELECT id, email, verification_token_expiry 
+       FROM deuss.users 
+       WHERE verification_token = $1 AND is_verified = false`,
+      [token]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired verification token' });
+    }
+
+    const user = result.rows[0];
+
+    // Check if token has expired
+    if (new Date() > new Date(user.verification_token_expiry)) {
+      return res.status(400).json({ error: 'Verification token has expired' });
+    }
+
+    // Update user as verified
+    await pool.query(
+      `UPDATE deuss.users 
+       SET is_verified = true, 
+           verification_token = NULL, 
+           verification_token_expiry = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [user.id]
+    );
+
+    res.json({ message: 'Email verified successfully' });
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({ error: 'Failed to verify email' });
   }
 });
 
@@ -555,7 +696,39 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
+    // Check email verification in production
+    if (process.env.EMAIL_VERIFICATION === 'true' && !user.is_verified) {
+      // Generate new verification token if needed
+      if (!user.verification_token || new Date() > new Date(user.verification_token_expiry)) {
+        const verificationToken = crypto.randomBytes(32).toString('hex');
+        const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+        await pool.query(
+          `UPDATE deuss.users 
+           SET verification_token = $1, 
+               verification_token_expiry = $2,
+               updated_at = NOW()
+           WHERE id = $3`,
+          [verificationToken, verificationTokenExpiry, user.id]
+        );
+
+        // Send new verification email
+        try {
+          await sendVerificationEmail(user.email, verificationToken);
+        } catch (emailError) {
+          console.error('Failed to send verification email:', emailError);
+        }
+      }
+
+      return res.status(403).json({
+        success: false,
+        message: 'Please verify your email before logging in',
+        needsVerification: true
+      });
+    }
+
     // Generate JWT with extended expiration for persistent auth
+    console.log('Creating JWT token with secret:', JWT_SECRET);
     const token = jwt.sign(
       { 
         id: user.id, 
@@ -564,9 +737,10 @@ app.post('/api/auth/login', async (req, res) => {
         tier: user.tier || 'basic',
         is_verified: user.is_verified || false,
       },
-      process.env.JWT_SECRET || 'your-secret-key',
+      JWT_SECRET,
       { expiresIn: '30d' } // 30 days to match cookie
     );
+    console.log('JWT token created successfully');
 
     // Format user data - used in all response scenarios
     const formattedUser = {
@@ -1185,12 +1359,21 @@ app.get('/api/auth/session', async (req, res) => {
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
       const token = authHeader.substring(7);
-      tokenUser = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+      console.log('Verifying JWT token with secret:', JWT_SECRET);
+      console.log('Token being verified:', token.substring(0, 20) + '...');
+      tokenUser = jwt.verify(token, JWT_SECRET);
+      console.log('Token verified successfully');
       if (tokenUser && tokenUser.id) {
         userId = tokenUser.id;
       }
     } catch (error) {
       console.error('Invalid JWT token in authorization header:', error);
+      console.error('JWT_SECRET value:', JWT_SECRET);
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
       // Continue to check session anyway
     }
   }
@@ -1240,7 +1423,7 @@ app.get('/api/auth/session', async (req, res) => {
         tier: user.tier || 'basic',
         is_verified: user.is_verified || false,
       },
-      process.env.JWT_SECRET || 'your-secret-key',
+      JWT_SECRET,
       { expiresIn: '30d' }
     );
     
@@ -1311,15 +1494,116 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       [resetToken, resetTokenExpiry, result.rows[0].id]
     );
 
-    // TODO: Send email with reset link
-    // For now, just return the token
-    res.json({
-      message: 'Password reset instructions sent',
-      resetToken
-    });
+    // Send reset password email
+    const resetUrl = `${process.env.FRONTEND_URL}/auth/reset-password?token=${resetToken}`;
+    
+    try {
+      // Use Resend's default domain if custom domain is not verified
+      const fromEmail = process.env.SMTP_FROM || 'Deuss <onboarding@resend.dev>';
+
+      const { data, error } = await resend.emails.send({
+        from: fromEmail,
+        to: email,
+        subject: 'Reset Your Password',
+        html: `
+          <div style="font-family: sans-serif; background-color: #1a202c; color: #e2e8f0; padding: 20px;">
+            <h1 style="color: #4299e1;">Deuss - Password Reset Request</h1>
+            <p>You requested to reset your password. Click the button below to set a new password:</p>
+            <p>
+              <a href="${resetUrl}" style="display: inline-block; background-color: #2d3748; color: #4299e1; padding: 10px 20px; text-decoration: none; border-radius: 5px; border: 1px solid #4299e1;">
+                Reset Password
+              </a>
+            </p>
+            <p>Or copy and paste the following link into your browser:</p>
+            <p><code style="color: #e2e8f0; background-color: #2d3748; padding: 5px; border-radius: 3px;">${resetUrl}</code></p>
+            <p>This link will expire in 1 hour.</p>
+            <p>If you didn't request this, please ignore this email.</p>
+          </div>
+        `
+      });
+
+      if (error) {
+        console.error('Error sending reset password email:', error);
+        return res.status(500).json({ error: 'Failed to send reset password email' });
+      }
+
+      res.json({
+        message: 'Password reset instructions sent to your email'
+      });
+    } catch (emailError) {
+      console.error('Error sending reset password email:', emailError);
+      res.status(500).json({ error: 'Failed to send reset password email' });
+    }
   } catch (error) {
     console.error('Forgot password error:', error);
     res.status(500).json({ error: 'Failed to process forgot password request' });
+  }
+});
+
+// Add new endpoint for resetting password
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: 'Token and new password are required' });
+  }
+
+  try {
+    // Find user with valid reset token
+    const result = await pool.query(
+      `SELECT id, email, reset_token_expiry 
+       FROM deuss.users 
+       WHERE reset_token = $1 AND reset_token_expiry > NOW()`,
+      [token]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const user = result.rows[0];
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update password and clear reset token
+    await pool.query(
+      `UPDATE deuss.users 
+       SET password = $1, 
+           reset_token = NULL, 
+           reset_token_expiry = NULL,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [hashedPassword, user.id]
+    );
+
+    // Send confirmation email
+    const mailOptions = {
+      from: {
+        name: 'No-Reply',
+        address: process.env.SMTP_FROM
+      },
+      to: user.email,
+      subject: 'Password Reset Successful',
+      html: `
+        <h1>Password Reset Successful</h1>
+        <p>Your password has been successfully reset.</p>
+        <p>If you didn't make this change, please contact support immediately.</p>
+      `
+    };
+
+    try {
+      await transporter.sendMail(mailOptions);
+    } catch (emailError) {
+      console.error('Error sending password reset confirmation email:', emailError);
+      // Don't fail the request if email fails
+    }
+
+    res.json({ message: 'Password has been reset successfully' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Failed to reset password' });
   }
 });
 
@@ -1342,7 +1626,7 @@ app.get('/api/notes', async (req, res) => {
     if (authHeader && authHeader.startsWith('Bearer ')) {
       try {
         const token = authHeader.substring(7);
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        const decoded = jwt.verify(token, JWT_SECRET);
         if (decoded && decoded.id) {
           userId = decoded.id;
         }

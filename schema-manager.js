@@ -461,6 +461,14 @@ node schema-manager.js --all              # Run all updates
       await populateDefaultBookmarks();
     }
     
+    // Add verification fields to users table
+    await pool.query(`
+      ALTER TABLE deuss.users 
+      ADD COLUMN IF NOT EXISTS verification_token VARCHAR,
+      ADD COLUMN IF NOT EXISTS verification_token_expiry TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT false;
+    `);
+    
     console.log('\nAll schema operations completed successfully!');
   } catch (error) {
     console.error('Error in schema management:', error);

@@ -24,9 +24,11 @@
     "express-session": "^1.18.1",
     "google-search-results-nodejs": "^2.1.0",
     "jsonwebtoken": "^9.0.2",
+    "node-fetch": "^2.6.7",
+    "nodemailer": "^7.0.3",
     "pg": "^8.15.6",
-    "uuid": "^11.1.0",
-    "node-fetch": "^2.6.7"
+    "resend": "^4.5.1",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
