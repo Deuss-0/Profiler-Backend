@@ -2,6 +2,8 @@
 
 A robust backend API for Profiler, built with Express.js and PostgreSQL, featuring comprehensive authentication, session management, and integrations with various platforms.
 
+![image](preview.png)
+
 ## Features
 
 - 🔐 Secure authentication with JWT and session management
