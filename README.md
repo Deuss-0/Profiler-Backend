@@ -1,6 +1,6 @@
-# Deus API
+# Profiler Backend API
 
-This is the backend API for Sigh, using Express.js and PostgreSQL for all data storage including sessions.
+This is the backend API for Profiler, using Express.js and PostgreSQL for all data storage including sessions.
 
 ## Setup
 
