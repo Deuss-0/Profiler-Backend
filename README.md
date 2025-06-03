@@ -1,6 +1,6 @@
 # Deuss Backend API
 
-A robust backend API for Deuss, built with Express.js and PostgreSQL, featuring comprehensive authentication, session management, and integrations with various platforms.
+A robust backend API for Profiler, built with Express.js and PostgreSQL, featuring comprehensive authentication, session management, and integrations with various platforms.
 
 ## Features
 
